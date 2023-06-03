@@ -1,0 +1,598 @@
+---
+title: "DATA 583 Regression Report"
+author: "Ujjwal Upadhyay, Shveta Sharma, Varshita Kyal"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+The dataset undertaken for analysis is regarding the life expectancy of 193 countries for a period of 16 years (2000-2015) along with the factors impacting it. The factors are mainly classified broadly into four categories namely immunization, mortality, economic and social. The purpose of this report is to examine how these 20 explanatory variable contribute to the life expectancy. The link to the dataset : https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who
+
+## Scientific Hypothesis
+
+1) *First Research Hypothesis* : 
+
+Null Hypothesis ($H_0$) : All predictors influencing life expectancy in "Developed" or "Developing" countries have same effect.
+
+Alternate Hypothesis ($H_a$) : One or More predictors influencing life expectancy in "Developed" or "Developing" countries have different effect.
+
+For example, we think expenditure on health as a percentage of Gross Domestic Product(GDP) per capita is a strong and significant factor affecting life expectancy in "Developing" countries but it might not have an equal amount of effect on life expectancy in "Developed" countries.
+Therefore, throughout the project we will build different models to best fit the data and check whether or not our hypothesis are correct.
+
+2) *Second Research Hypothesis* :
+
+Null Hypothesis ($H_0$) : All the independent variables such as life expectancy, adult mortality, alcohol consumption, percentage expenditure of GDP on health, hepatitis B, measles, bmi, etc are not significant predictors of whether a country is "Developed" or "Developing".
+
+Alternative Hypothesis ($H_a$) : At least one of the independent variables such as life expectancy, adult mortality, alcohol consumption, percentage expenditure of GDP on health, hepatitis B, measles, bmi, etc are significant predictors of whether a country is "Developed" or "Developing".
+
+### Multicollinearity 
+```{r echo=FALSE, include=FALSE}
+life_data <- read.csv("Life_Expectancy_Data.csv")
+mydata <- read.csv("Life_Expectancy_Data.csv")
+```
+
+```{r message=FALSE, echo=FALSE}
+
+library(dplyr)
+
+rows_containing_nulls <- life_data[apply(life_data, 1, function(x) any(is.na(x))), ]
+
+# Replace population with mean population for each country
+life_data <- life_data %>%
+  group_by(Country) %>%
+  mutate(Population = ifelse(is.na(Population), mean(Population, na.rm = TRUE), Population))
+
+# Replace GDP with mean GDP for each country
+life_data <- life_data %>%
+  group_by(Country) %>%
+  mutate(GDP = ifelse(is.na(GDP), mean(GDP, na.rm = TRUE), GDP))
+
+
+col_names <- colnames(life_data)[!colnames(life_data) %in% "Country"]
+
+# Loop through columns and replace NA values with mean of each column for each country
+for (col in col_names) {
+  life_data[[col]] <- ave(life_data[[col]], life_data$Country, FUN = function(x) ifelse(is.na(x), mean(x, na.rm = TRUE), x))
+}
+
+```
+
+```{r echo=FALSE, fig.width=6, fig.height=4, fig.align='left', message=FALSE}
+# Load the required packages
+library(ggplot2)
+library(reshape2)
+
+new.data <- subset(mydata, select = -c(Country, Status, Year))
+# Remove missing data from the dataset
+clean_data <- na.omit(new.data)
+
+# Compute the correlation matrix
+cor_mat <- cor(clean_data)
+
+
+# Convert the correlation matrix to a dataframe
+cor_df <- melt(cor_mat)
+
+# Create a heatmap
+ggplot(data = cor_df, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1,1), space = "Lab",
+                       name="Pearson\nCorrelation") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, 
+                                    size = 10, hjust = 1),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.justification = c(1, 0),
+        legend.direction = "vertical")+
+  labs(title = "Graph 1 : Correlation Matrix") 
+```
+### VIF (Variance Inflation factor)
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(car)
+
+# Define the predictor variables
+predictors <- c("Adult.Mortality","infant.deaths", "Alcohol", "percentage.expenditure", 
+                "Hepatitis.B", "Measles", "BMI", "under.five.deaths", "Polio", 
+                "Total.expenditure", "Diphtheria", "HIV.AIDS", "GDP", "Population", 
+                "thinness..1.19.years", "thinness.5.9.years", 
+                "Income.composition.of.resources", "Schooling")
+
+# Define the outcome variable
+outcome <- "Life.expectancy"
+
+# Create a data frame with the predictor and outcome variables
+life_data1 <- data.frame(life_data[predictors], life_data[outcome])
+
+# Fit the model with the data argument specified
+model <- lm(paste(outcome, paste(predictors, collapse = "+"), sep = "~"), data = na.omit(life_data1))
+
+# Compute VIF values
+vif_values <- data.frame(Predictor = names(vif(model)), VIF = vif(model), row.names = NULL)
+
+# Print the table in R Markdown format
+knitr::kable(vif_values, caption = "VIF values for the predictor variables")
+
+```
+\newpage
+
+As we observed in Pearson correlation plot in exploratory data analysis, there is high positive correlation between infant deaths and under five deaths. There were some other predictors that demonstrated multicollinearity. To detect multi-collinearity, we used various statistical methods, such as correlation matrices, and variance inflation factors (VIF). As multicollinearity is detected, we reduced its effects by removing one or more of the highly correlated independent variables. For instance, we removed infant deaths and only kept under five deaths. From the figure above,we can see that VIF for infant deaths and under five deaths is over 10. We kept a cutoff point of VIF=10 to reduce multi-collinearity.
+
+### Linearity Assumption
+
+The response variable "Life Expectancy" is nearly normally distributed. We did observe some variables that were skewed but since they represented natural variation, we didn't get rid of the outliers. We expected data to be somewhat skewed for those attributes as there is huge variation and diversification in countries.
+
+## Regression Analysis
+
+For the first research hypothesis, we would perform regression analysis with two different families of GLM. We have included interaction term, "Developed" which is a binary variable categorizing the countries in dataset as "Developed" or "Developing". One of the families is  gaussian family. As the response variable i.e. "Life Expectancy" is continuous and normally distributed, we opted to use the  gaussian (normal) distribution to model it. The other family we used for comparison with  gaussian is gamma family as "Life Expectancy" histogram was somewhat positively skewed and gamma family can handle continuous data with a positive skew that cannot be modeled well using the  gaussian distribution. Moreover, In GLMs, the gamma distribution is often used with a logarithmic link function to ensure that the predicted values are positive which is acceptable case in terms of life Expectancy.
+
+###  Variable Selection
+
+#### Generalized Linear Model(GLM) (family - " gaussian") :
+
+One of the models we used is Generalized Linear Model(GLM) (family - " gaussian") with interaction term using a new binary column "Developed", wherein, 1 represents "Developed" and 0 represents "Developing". This binary attribute is tested for interaction with other continuous predictors like adult mortality rate, alcohol consumption, expenditure on health as a percentage of gross domestic product per capita(%),  hepatitis B, measles, BMI, under five deaths, polio,  general government expenditure on health as a percentage of total government expenditure(%), diphteria, HIV/AIDS, GDP, population, malnutrition(1-19 years), malnutrition(5-9 years), income composition of resources and schooling. We tried both AIC(Alkaline Information Criterion) and BIC (Bayesian Information Criterion) with backward elimination, forward and "both" selection techniques to model to select variables for best model selection. Backward and "both" selection techniques provides similar results with close to 18 predictors values whereas forward selection technique doesn't work well as it fails to provide a parsimonious model. Moreover, In between AIC and BIC, BIC provided a list 15 significant predictors resulting in a much simpler model.
+
+```{r warning=FALSE, echo=FALSE, include=FALSE}
+##GLM with family  gaussian
+# Load required libraries
+library(tidyverse)
+
+# Define the predictor variables
+predictors <- c("Adult.Mortality", "Alcohol", "percentage.expenditure", 
+                "Hepatitis.B", "Measles", "BMI", "under.five.deaths", "Polio", 
+                "Total.expenditure", "Diphtheria", "HIV.AIDS", "Population", 
+                "thinness..1.19.years", "thinness.5.9.years", 
+                "Income.composition.of.resources", "Schooling")
+
+# Define the outcome variable
+outcome <- "Life.expectancy"
+
+# Create a dummy variable for developed vs developing nations
+life_data$Developed <- ifelse(life_data$Status == "Developed", 1, 0)
+
+# Create interaction terms between predictor variables and the dummy variable
+interaction_terms <- c(predictors, paste(predictors, "Developed", sep = ":"))
+
+# Split data into training and testing datasets
+set.seed(123) # for reproducibility
+train_index <- sample(nrow(life_data), 0.7*nrow(life_data)) # 70% for training
+train_data <- life_data[train_index, ]
+test_data <- life_data[-train_index, ]
+
+# Fit the interaction model as a GLM with  gaussian family on the training dataset
+full.model <- glm(paste(outcome, paste(interaction_terms, collapse = "+"), sep = "~"), 
+                  data = na.omit(train_data), family =  gaussian())
+
+# Print summary of the fitted model
+summary(full.model)
+
+```
+
+#### Generalized Linear Model(GLM) (family - "Gamma(link='log')") :
+
+GLM with gamma family provided very similar results compared to  gaussian family. The technique used for variable selection was similar to other models to keep it consistent. The significant and non-significant predictors in best model were also similar. We would further do a model comparison to determine which model provides better metric scores for test results.
+
+```{r echo=FALSE, include=FALSE}
+# Remove missing values from the test dataset
+test_data <- na.omit(test_data)
+
+# Generate predicted values using the test data
+test_preds <- predict(full.model, newdata = test_data)
+
+# Calculate the test MSE
+test_mse_gaussian <- mean((test_data$Life.expectancy - test_preds)^2)
+test_mse_gaussian 
+```
+
+```{r warning=FALSE, echo=FALSE, include=FALSE}
+##GLM with family gamma
+
+library(tidyverse)
+### removing the infant death 
+# Define the predictor variables
+predictors <- c("Adult.Mortality", "Alcohol", "percentage.expenditure", 
+                "Hepatitis.B", "Measles", "BMI", "under.five.deaths", "Polio", 
+                "Total.expenditure", "Diphtheria", "HIV.AIDS", "Population", 
+                "thinness..1.19.years", "thinness.5.9.years", 
+                "Income.composition.of.resources", "Schooling")
+
+
+# Define the outcome variable
+outcome <- "Life.expectancy"
+
+# Create a dummy variable for developed vs developing nations
+life_data$Developed <- ifelse(life_data$Status == "Developed", 1, 0)
+
+# Create interaction terms between predictor variables and the dummy variable
+interaction_terms <- c(predictors, paste(predictors, "Developed", sep = ":"))
+
+# Fit the interaction model as a GLM with  gaussian family
+full.model.gamma <- glm(paste(outcome, paste(interaction_terms, collapse = "+"), sep = "~"), data = na.omit(life_data), family = Gamma(link='log'))
+summary(full.model.gamma)
+
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE}
+# Generate predicted values using the test data
+test_preds <- predict(full.model.gamma, newdata = test_data)
+
+# Calculate the test MSE
+test_mse_gamma <- mean((test_data$Life.expectancy - test_preds)^2)
+test_mse_gamma
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE}
+##Stepwise GLM with  gaussian
+
+library("MASS")
+step.model <- stepAIC(full.model , direction = "backward", k=log(nrow(na.omit(life_data))), trace=0)
+
+summary(step.model)
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE}
+# Generate predicted values using the test data
+test_preds <- predict(step.model, newdata = test_data)
+
+# Calculate the test MSE
+test_mse_gaussian_step <- mean((test_data$Life.expectancy - test_preds)^2)
+test_mse_gaussian_step 
+```
+
+
+```{r echo=FALSE, include=FALSE, warning=FALSE}
+##Stepwise GLM with gamma
+
+library("MASS")
+step.model.gamma <- stepAIC(full.model.gamma , direction = "backward", k=log(nrow(na.omit(life_data))), trace=0)
+
+#null_deviance <- summary(step.model.gamma)$null.deviance
+
+```
+
+```{r echo=FALSE, include=FALSE, warning=FALSE}
+# Generate predicted values using the test data
+test_preds <- predict(step.model.gamma, newdata = test_data)
+
+# Calculate the test MSE
+test_mse_gamma_step <- mean((test_data$Life.expectancy - test_preds)^2)
+test_mse_gamma_step 
+```
+
+\newpage
+
+#### Model Comparison
+
+```{r echo=FALSE, warning=FALSE}
+anova_table <- anova(step.model,full.model,test = "Chisq")
+
+knitr::kable(anova_table, caption = "Anova table for GLM (family=  gaussian)")
+```
+
+The difference in deviance between the two models (full and stepwise) of GLM with gaussian. A large deviance indicates a poor fit. In this case, the deviance is 324.
+The p-value for a chi-squared test of the null hypothesis that the difference in deviance between the two models is equal to the degrees of freedom. In this case, the p-value is 0.224, which indicates that there is no significant difference in deviance between the full model and stepwise model at the 0.05 level of significance. The high p-value suggests that the difference in deviance between the two models is not statistically significant, meaning that there is not enough evidence to reject the null hypothesis that both models fit the data equally well. Overall, the analysis suggests that there is not enough evidence to prefer full model over stepwise model as a better fit for the data.
+
+```{r echo=FALSE, warning=FALSE}
+anova_table1 <- anova(step.model.gamma,full.model.gamma,test = "Chisq")
+
+knitr::kable(anova_table1, caption = "Anova table for GLM (family= gamma(log='link'))")
+```
+
+Here, we see that for GLM with family = gamma has deviance of 0.09 and p-value is 0.09, which indicates that there is no significant difference in deviance between the full model and stepwise model at the 0.05 level of significance.The high p-value suggests that the difference in deviance between the two models is not statistically significant, meaning that there is not enough evidence to reject the null hypothesis that both models fit the data equally well.
+Overall, the analysis suggests that there is not enough evidence to prefer full Model over stepwise model for GLM (family=gamma) as a better fit for the data.
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+library(pscl)
+library(rsq)
+
+model_list <- list(full.model, step.model, full.model.gamma, step.model.gamma)
+model_names <- c("Full Model -  gaussian", "Stepwise Model -  gaussian", "Full Model - gamma", "Stepwise Model - gamma")
+
+result_df <- data.frame(Model = character(),
+                        AIC = numeric(),
+                        BIC = numeric(),
+                        Residual_Deviance = numeric(),
+                        Null_Deviance = numeric(),
+                        stringsAsFactors = FALSE)
+
+
+for(i in seq_along(model_list)) {
+  result_df[i, "Model"] <- model_names[i]
+  result_df[i, "AIC"] <- AIC(model_list[[i]])
+  result_df[i, "BIC"] <- BIC(model_list[[i]])
+  result_df[i, "Residual_Deviance"] <- deviance(model_list[[i]])
+  result_df[i, "Null_Deviance"] <- summary(model_list[[i]])$null.deviance
+}
+
+result_df <- as.data.frame(result_df)
+
+library(knitr)
+kable(result_df, caption = "Model comparison results")
+
+```
+
+The AIC (Akaike information criterion) and BIC (Bayesian information criterion) are both measures of model fit that balance model complexity and goodness of fit. In general, lower AIC and BIC values indicate better model fit.
+
+In this case, the AIC and BIC values of the stepwise model are lower than those of the full model, indicating that the stepwise model has a better balance of model complexity and goodness of fit. However, the residual deviance of the full models is lower than that of the stepwise models, suggesting that the full model has a better fit to the data.
+
+Overall, while the stepwise model -  gaussian has a better balance of complexity and goodness of fit according to the AIC and BIC, the full model -  gaussian may still have a better fit to the data according to the residual deviance.
+
+```{r echo=FALSE, warning=FALSE}
+library(pscl)
+library(rsq)
+
+# Function to calculate adjusted R^2
+calc_adj_r_squared <- function(null_dev, resid_dev, n_obs, n_pred) {
+  r_sq <- 1 - (resid_dev / null_dev)
+  adj_r_sq <- 1 - ((1 - r_sq) * ((n_obs - 1) / (n_obs - n_pred - 1)))
+  return(adj_r_sq)
+}
+
+model_list <- list(full.model, step.model, full.model.gamma, step.model.gamma)
+model_names <- c("Full Model -  gaussian", "Stepwise Model -  gaussian", "Full Model - gamma", "Stepwise Model - gamma")
+
+result_df <- data.frame(Model = character(),
+                        AIC = numeric(),
+                        BIC = numeric(),
+                        Residual_Deviance = numeric(),
+                        Null_Deviance = numeric(),
+                        Adj_R_Squared = numeric(),
+                        stringsAsFactors = FALSE)
+
+
+for(i in seq_along(model_list)) {
+  result_df[i, "Model"] <- model_names[i]
+  result_df[i, "AIC"] <- AIC(model_list[[i]])
+  result_df[i, "BIC"] <- BIC(model_list[[i]])
+  result_df[i, "Residual_Deviance"] <- deviance(model_list[[i]])
+  result_df[i, "Null_Deviance"] <- summary(model_list[[i]])$null.deviance
+  result_df[i, "Adj_R_Squared"] <- calc_adj_r_squared(result_df[i, "Null_Deviance"], 
+                                                      result_df[i, "Residual_Deviance"], 
+                                                      n_obs = 2128, 
+                                                      n_pred = ifelse(i %% 2 == 1, 32, 15))
+
+  # Add Test MSE for each model
+  if(i == 1) {
+    result_df[i, "Test_MSE"] <- test_mse_gaussian
+  } else if(i == 2) {
+    result_df[i, "Test_MSE"] <- test_mse_gaussian_step
+  } else if(i == 3) {
+    result_df[i, "Test_MSE"] <- test_mse_gamma
+  } else if(i == 4) {
+    result_df[i, "Test_MSE"] <- test_mse_gamma_step
+  }
+}
+result_df <- as.data.frame(result_df)
+
+# select first and last two columns
+df_subset <- result_df[, c(1,(ncol(result_df)-1):ncol(result_df))]
+
+library(knitr)
+kable(df_subset, caption = "Model comparison results")
+
+
+```
+
+As per the given table, we can observe that GLM (family = "Gaussian") stepwise model has adjusted $r^2$ value of 0.83, hence, it can explain 83% variation in model. The test MSE is also 14.5 which is lower than gamma family GLM full/stepwise model. We do observe that full model and stepwise models are quite similar in terms of test statistics, but, for sake of parsimony, we would go for stepwise model as it is simpler with 95% of predictors in the model being highly significant.
+But before making that selection, we should have a look at diagnostic plots for stepwise models of both gaussian and gamma families.
+
+### Diagnostic Plots
+
+##### Graph 2: GLM(family =  Gaussian) Stepwise Regression Plot
+
+```{r, echo=FALSE, fig.width=8, fig.height=6, warning=FALSE,fig.align='left', warning=FALSE}
+par(mfrow=c(2,2))
+plot(step.model)
+```
+
+*Scatter plot of residuals vs. fitted values*: There was no pattern in the plot as the predicted values of the dependent variable and the residuals are scattered. 
+Hence, the linear assumptions are met such as non-linearity, heteroscedasticity, or outliers.
+
+*Normal probability plot (QQ plot) of residuals*: The residuals are normally distributed, the points in the plot will fall approximately along a straight line. 
+
+*Scale-location plot*: This plot shows that the variance is constant, the points in the plot are evenly scattered around a horizontal line. 
+
+*Residuals vs. leverage plot*: This plot shows that there are no High leverage observations or outliers that might influence on the model.
+
+*Cook's distance plot*: This plot shows there are no observations with a high Cook's distance that may have a large influence on the model.
+
+Hence, there are no major issues with this GLM model and it seems like a good fit on our dataset for analyzing life expectancy.
+
+##### Graph 3: GLM(family = Gamma (log='link')) Stepwise Regression Plot
+
+```{r, echo=FALSE, fig.width=8, fig.height=6, warning=FALSE,fig.align='left'}
+par(mfrow=c(2,2))
+plot(step.model.gamma)
+```
+
+The diagnostic plots for gamma family GLM model are very similar to gaussian family. Hence, there is no major issue in this GLM gamma family stepwise model.
+
+## Logistic Regression
+
+For second research hypothesis we perform classification using logistic regression. It is a statistical method used to analyze and model the relationship between a dependent variable (also called the response or target variable) and one or more independent variables (also called predictors or features). Unlike linear regression, which models a continuous response variable, logistic regression models the probability of a binary outcome (i.e., whether an event will or will not occur). It is a type of generalized linear model (GLM) that uses a logit link function to transform the probability of the binary outcome to a linear model.
+The output of a logistic regression model is typically the predicted probability of the binary outcome for a given set of predictor values. The model is trained by maximizing the likelihood of the observed data, and the coefficients of the independent variables represent the log odds ratio of the outcome for a unit change in the predictor or feature variable, keeping all other variables as constant.
+
+### Modelling 
+
+We have splitted the whole dataset into train and test sets with 70% used for training and remaining 30% as testing. Logistic regression is fitted on the training dataset which showed many predictors such as measles, bmi, polio as insignificant, so we used BIC(Bayesian Information Criterion) in a backward selection procedure for feature selection which gave only five predictors as significant in classifying  the country as developed or developing.
+
+```{r message=FALSE,warning=FALSE, echo=FALSE, include=FALSE}
+
+library(tidyverse)
+library(MASS)
+
+
+# Clean data
+lr_data <- na.omit(life_data)
+lr_data$Developed <- ifelse(lr_data$Status == "Developed", 1, 0)
+lr_data$Developed <- factor(lr_data$Developed)
+
+newlr_data <- subset(lr_data, select = -c(Country, Year, Status,infant.deaths))
+
+# Split data into train and test sets
+set.seed(123)
+train_idx <- sample(1:nrow(newlr_data), size = round(0.7 * nrow(newlr_data)))
+train_data <- newlr_data[train_idx, ]
+test_data <- newlr_data[-train_idx, ]
+
+# Fit initial model
+init_model <- glm(Developed ~ ., data = train_data, family = binomial(link = "logit"))
+
+# Variable selection using backward stepwise regression
+step_model <- stepAIC(init_model, direction = "backward", k = log(nrow(train_data)), trace = 0)
+
+# Make predictions on test data
+test_data$pred <- predict(step_model, newdata = test_data, type = "response")
+test_data$pred_class <- ifelse(test_data$pred >= 0.5, "Developed", "Developing")
+
+# Evaluate model performance
+confusion_matrix <- table(test_data$Developed, test_data$pred_class)
+confusion_matrix <- confusion_matrix[c(2,1),]
+```
+
+
+```{r echo=FALSE}
+
+my_table <- matrix(c(75, 16, 21, 526), nrow = 2, dimnames = list(c("Actual Developed", "Actual Developing"), c("Predicted Developed", "Predicted Developing")))
+
+knitr::kable(my_table, caption = "Confusion Matrix")
+```
+The above selected model is used to make predictions on the test dataset. The predicted probabilities are converted to predicted classes using a decision threshold of 0.5 which is used to compute the confusion matrix which is a table that compares the actual and predicted labels of a classification model. The above confusion matrix correctly predicted 75 samples as "Developed", incorrectly predicted 21 samples as "Developing" when they were actually "Developed", incorrectly predicted 16 samples as "Developed" when they were actually "Developing" and correctly predicted 526 samples as "Developing".
+
+#### Model Comparison
+
+```{r echo=FALSE, warning=FALSE}
+
+anova_table <- anova(step_model,init_model,test = "Chisq")
+knitr::kable(anova_table, caption = "Anova table for Logistic Regression")
+```
+
+
+The difference in deviance between the two models (full and stepwise) of Logistic Regression. A small deviance indicates a good fit. In this case, the deviance is 15.276. The p-value for a chi-squared test of the null hypothesis that the difference in deviance between the two models is equal to the degrees of freedom. In this case, the p-value is 0.2904, which indicates that there is no significant difference in deviance between the full model and stepwise model at the 0.05 level of significance. 
+The high p-value suggests that the difference in deviance between the two models is not statistically significant, meaning that there is not enough evidence to reject the null hypothesis that both models fit the data equally well.
+Overall, the analysis suggests that there is not enough evidence to prefer full model over stepwise model as a better fit for the data.
+
+#### Performance Metrics of Logistic Regression
+
+```{r echo=FALSE}
+
+# Convert performance metrics to a data frame
+performance_df <- data.frame(
+  Metric = c("Accuracy", "Precision", "Recall", "F1 score"),
+  Value = c(0.942, 0.9616, 0.9705, 0.966)
+)
+
+# Create a knitr table with caption and label
+knitr::kable(performance_df, caption = "Performance metrics for the model", label = "tbl:performance_metrics")
+
+```
+
+
+From the confusion matrix we can compute the performance metrics as accuracy, precision, recall, and F1 score.
+
+**Accuracy**: It measures the proportion of correct predictions made by the model. The accuracy of the model is 0.942, which means that the model has correctly predicted 94.2% of the cases.
+**Precision**: It measures the proportion of true positives (correctly predicted positive cases) among all the positive predictions made by the model. The precision of the model is 0.9616 which means that when the model predicts a country as developed correctly 96.16% of the time.
+**Recall**: The recall of the model is 0.9705, which means that the model has correctly identified 97.05% of the developed countries.
+**F1 score**: It is the harmonic mean of precision and recall, which provides a balanced measure of both precision and recall. In this case, the F1 score of the model is 0.966, which means that the model's overall performance is good considering both precision and recall.
+
+```{r echo=FALSE,include=FALSE}
+# Calculate model performance metrics
+accuracy <- sum(diag(confusion_matrix))/sum(confusion_matrix)
+precision <- confusion_matrix[2,2]/sum(confusion_matrix[,2])
+recall <- confusion_matrix[2,2]/sum(confusion_matrix[2,])
+f1_score <- 2 * precision * recall / (precision + recall)
+
+# Print results
+cat("Model accuracy: ", round(accuracy, 4), "\n")
+cat("Model precision: ", round(precision, 4), "\n")
+cat("Model recall: ", round(recall, 4), "\n")
+cat("Model F1 score: ", round(f1_score, 4), "\n")
+
+```
+
+### Graph 4 : Diagnostic Plots - Classification 
+
+```{r, echo=FALSE, fig.width=8, fig.height=6, warning=FALSE,fig.align='left', warning=FALSE}
+par(mfrow=c(2,2))
+plot(step_model)
+```
+The diagnostic plot for a logistic regression model suggests:
+
+*Residual plot*: The residuals are not distributed approximately symmetrically distributed around zero.
+
+*Normal Q-Q plot*: The plot of the residuals does not follow a straight line, indicating there no normality of the residuals.
+
+*Scale-location plot*: The plot of the absolute residuals against the fitted values shows some patterns, indicating that the variance of the residuals is not constant across the range of the fitted values.
+
+*Cook's distance plot*: The plot of Cook's distance against the observation number does not show any observations with large values, indicating the absence of influential outliers.
+
+Therefore, this diagnostic plot for a logistic regression model show some patterns, indicating that the model does not fit the data well and some statistical assumptions are compromised.
+
+## Results
+
+### Regression Results
+
+As discussed in detail above, a stepwise GLM (with interactions) model with family="gaussian" is the best model in terms of parsimony, AIC, BIC, Test MSE and adjusted $R^2$.
+
+GLM model,where the response variable is Life expectancy and the statistically significant predictors are adult mortality rate, alcohol, percentage expenditure, BMI, polio, diphtheria, HIV AIDS, income composition of resources, schooling, percentage expenditure:developed, BMI:developed, malnutrition(1-19)years:developed, income composition of resources:developed, and schooling:developed.
+
+A one-unit increase in Adult Mortality is associated with a decrease in Life expectancy of 0.0128 years, holding all other variables constant. Similarly, a one-unit increase in Alcohol is associated with a decrease in Life expectancy of 0.226 years, holding all other variables constant.
+
+Some of the variables have interactions with Developed, which means their effect on life expectancy is different depending on whether the country is developed or not. For example, a one-unit increase in Income composition of resources is associated with an increase in Life expectancy of 8.134 years, holding all other variables constant, but this effect is stronger for developed countries, as the interaction term Income composition of resources:Developed has a coefficient of 33.655.
+Also, the coefficient for percentage expenditure is 0.00106, which means that for every one-unit increase in percentage expenditure, the outcome variable is expected to increase by 0.00106 units, holding all other variables constant. However, the coefficient for the interaction term "percentage expenditure:Developed" is -0.001066, which means that the effect of percentage expenditure on the outcome variable is different for developed countries compared to non-developed countries. Specifically, the effect is expected to be lower for developed countries compared to non-developed countries.
+
+Similarly, the coefficients for "BMI" and "thinness..1.19.years" indicate their effects on the outcome variable, while the coefficients for the interaction terms "BMI:Developed" and "thinness..1.19.years:Developed" indicate how these effects vary for developed countries compared to non-developed countries.
+
+Overall, this model suggests that the effects of certain predictor variables on the outcome variable may vary depending on whether a country is considered developed or not.The p-values of the coefficients indicate their statistical significance. The smaller the p-value, the stronger the evidence against the null hypothesis of no effect. All the coefficients except for thinness..1.19.years are statistically significant at a 5% significance level.
+
+The final equation of the model is:
+
+$Life Expectancy = 49.128015 - 0.012866 * Adult Mortality - 0.226491 * Alcohol + 0.001060 * percentage expenditure + 0.066353 * BMI + 0.026517 * Polio + 0.025679 * Diphtheria - 0.493725 * HIV/AIDS - 0.018728 * thinness among children under 5 years + 8.134580 * HDI + 0.944727 * Schooling - 0.001066 * percentage expenditure:Developed - 0.066152 * BMI:Developed - 1.485421 * thinness among children under 5 years:Developed + 33.655204 * HDI:Developed - 1.258324 * Schooling:Developed$
+
+where HDI is the Income Composition of Resources in terms of the Human Development Index.
+
+### Classification Results
+
+The logistic regression model is predicting the probability of a country being categorized as "Developed" based on the following predictor variables: adult mortality, alcohol, hepatitis B, under-five deaths, and income composition of resources.
+
+The equation for the logistic regression model is:
+
+$log(odds of being Developed) = -18.793671 - 0.007982 * Adult Mortality + 0.353858 * Alcohol + 0.022927 * Hepatitis B - 0.347856 * under five deaths + 18.388387 * Income composition of resources$
+
+The coefficients for each predictor variable indicate the direction and strength of the relationship between the predictor and the probability of a country being categorized as "Developed". For example, as alcohol increases by 1 unit, the log odds of being classified as "Developed" increase by 0.353858 all else being equal. Also, as adult mortality increases by 1 unit, the log odds of being classified as "Developed" decreases by 0.007982 all else being equal.
+
+The p-values for each coefficient indicate the statistical significance of the relationship between the predictor and the outcome. A p-value less than 0.05 is generally considered statistically significant, which means that we can reject the null hypothesis that the predictor has no effect on the outcome.
+
+The deviance residuals measure the goodness of fit of the model. A smaller residual deviance indicates a better fit of the model to the data. In this case, the residual deviance is 366.32, which is smaller than the null deviance of 1204.61, indicating that the model is a good fit for the data.
+
+Overall, the model suggests that adult mortality, alcohol, hepatitis B, under-five deaths, and income composition of resources are all significant predictors of a country being categorized as "Developed".
+
+## Conclusion
+
+### First Scientific Research Hypothesis
+
+As per the regression results from Stepwise Generalized Linear Model (family = " gaussian") , we reject the null hypothesis in the favor of alternate hypothesis.
+Hence, we conclude that *One or More predictors influencing life expectancy in "Developed" or "Developing" countries have different effect*.
+The important variables identified in the GLM interaction model are adult mortality rate, alcohol, percentage expenditure, Bmi, polio, diphtheria, HIV AIDS, income composition of resources, schooling, percentage expenditure:developed, BMI:developed, malnutrition(1-19)years:developed, income composition of resources:developed, and schooling:developed.
+As discussed above and proven through statistical test metrics, the most appropriate model discovered for first scientific research hypothesis is GLM interaction model(family=" gaussian").A certain statistical assumption around life expectancy data being normally distributed may be violated as we know the data is slightly right skewed but as we have observed in diagnostic plots, it didn't effect the results in a significant way.
+The current model has a adjusted $R^2$ value of 0.83 i.e. it explains only 83% variation in data. This is believed to be an good adjusted $R^2$ and doesn't seem like an overfit model.
+
+### Second Scientific Research Hypothesis
+
+In conclusion, we reject the null hypothesis that none of the independent variable is significant in classifying a country into "Developed" or "Developing". From the Logistic regression analysis with BIC method for variable selection is the most approriate model which state that adult mortality, alcohol, hepatitis B, under-five deaths, and income composition of resources are significant predictors for classifying a country into "Developed" or "Developing".
+
+From the diagnostic plot we observe that the model is overfitting the data and not generalizing well to new data.Hence inspite of 94% classification in training set, we might see a decline when exposed to new data corresponding to year after 2015.
+
+## Technical Difficulties and Future Work 
+
+For first research hypothesis we also tried fitting GAM(General Additive Model) with family " gaussian", we faced performance issue while running the model and technical difficulties during variable selection of the model.The result from the model seemed unrealistic as all the diagnostic plots were showing overfitting of the model. 
+
+## Future Work 
+
+We can include more in-depth analysis of GAM in future scope which can help us to resolve the technical difficulties. Therefore, we suggest not concluding GAM as best fit for our dataset.We would also like to run our regression and classification model on life expectancy data post year 2015 to validate its performance in predicting life expectancy and accuracy of results.
